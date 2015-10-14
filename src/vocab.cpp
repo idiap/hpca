@@ -36,23 +36,23 @@
 int verbose = true; // true or false
 int num_threads = 8; // pthreads
 char *c_input_file_name, *c_vocab_file_name;
-int max_vocab_size = 10000;
+int max_vocab_size = 1000000;
 
 /**
  * Write out vocabulary file
  **/
 int writevocab(std::string output_file_name, Hashtable *hash){
-    
+
     if (verbose) fprintf(stderr, "Writing vocabulary file in %s\n", output_file_name.c_str());
-   
+
     // sorting
     hash->sort();
 
     // writing
     hash->print(output_file_name.c_str());
-    
+
     if(verbose) fprintf(stderr,"Counted %ld unique words.\n", hash->size());
-    
+
     return 0;
 }
 
@@ -60,7 +60,7 @@ int writevocab(std::string output_file_name, Hashtable *hash){
  * the worker
  **/
 void *getvocab( void *p ){
-    
+
     // get start & end for this thread
     Thread* thread = (Thread*)p;
     const long int start = thread->start();
@@ -68,7 +68,7 @@ void *getvocab( void *p ){
     const long int nbop = (end-start)/100;
     // get output file name
     std::string output_file_name = std::string(c_vocab_file_name);
-    
+
     // attach thread to CPU
     if (thread->id() != -1){
         thread->set();
@@ -77,15 +77,15 @@ void *getvocab( void *p ){
             fprintf(stderr,"create pthread n°%ld, reading from position %ld to %ld\n",thread->id(), start, end-1);
         }
     }
-    
+
     // create vocab
-    Hashtable hash(max_vocab_size);
+    Hashtable hash(max_vocab_size,max_vocab_size*10);
     // open input file
     std::string input_file_name = std::string(c_input_file_name);
     File input_file(input_file_name);
     input_file.open();
     input_file.jump_to_position(start);
-    
+
     long long ntokens=0;
     // read and store tokens
     char word[MAX_TOKEN];
@@ -114,7 +114,7 @@ void *getvocab( void *p ){
 
     // exit thread
     if ( thread->id()!= -1 ){
-        long long *ptr_ntokens = (long long *) thread->object; 
+        long long *ptr_ntokens = (long long *) thread->object;
         // increment total number of tokens
         (*ptr_ntokens) += ntokens;
         // write hash table
@@ -130,17 +130,17 @@ void *getvocab( void *p ){
 }
 
 int merge(const int nthreads){
-    
+
     if (verbose) fprintf(stderr,"merging all %d temporary files\n",nthreads);
-    
+
     // get output file name
     std::string output_file_name = std::string(c_vocab_file_name);
     // create vocab
-    Hashtable hash(max_vocab_size);
-    
+    Hashtable hash(max_vocab_size, max_vocab_size*10);
+
     char token[MAX_TOKEN];
     int freq;
-    char temp_hash_file[MAX_FILE_NAME];
+    char temp_hash_file[MAX_FULLPATH_NAME];
     // loop over pthread
     for (int t=0; t<nthreads; t++){
         sprintf(temp_hash_file, "%s-%d", c_vocab_file_name,t);
@@ -175,34 +175,34 @@ int run() {
     // define input file
     std::string input_file_name = std::string(c_input_file_name);
     File input_file(input_file_name);
-    
+
     // get input file byte size
     long int fsize = input_file.size();
     if (verbose) fprintf(stderr, "number of byte in %s = %ld\n",c_input_file_name,fsize);
-    
+
     // initialize number of tokens counter
     long long ntokens=0;
-    
+
     // get optimal number of threads
     MultiThread threads( num_threads, 1, true, fsize, NULL, &ntokens);
     if (verbose) fprintf(stderr, "number of pthreads = %d\n", threads.nb_thread());
-    input_file.split(threads.nb_thread());    
+    input_file.split(threads.nb_thread());
     threads.linear( getvocab, input_file.flines );
-    
+
    if (threads.nb_thread()>1){
        if (verbose) fprintf(stderr, "\ndone after reading %lld tokens.\n", ntokens);
        merge(threads.nb_thread());
-   } 
-    
+   }
+
     return 0;
 }
 
 
 int main(int argc, char **argv) {
     int i;
-    c_input_file_name = (char*)malloc(sizeof(char) * MAX_FILE_NAME);
-    c_vocab_file_name = (char*)malloc(sizeof(char) * MAX_FILE_NAME);
-    
+    c_input_file_name = (char*)malloc(sizeof(char) * MAX_FULLPATH_NAME);
+    c_vocab_file_name = (char*)malloc(sizeof(char) * MAX_FULLPATH_NAME);
+
     if (argc == 1) {
         printf("HPCA: Hellinger PCA for Word Embeddings, vocabulary extraction\n");
         printf("Author: Remi Lebret (remi@lebret.ch)\n\n");
@@ -215,6 +215,8 @@ int main(int argc, char **argv) {
         printf("\t\tOutput file to save the vocabulary\n");
         printf("\t-threads <int>\n");
         printf("\t\tNumber of threads; default 8\n");
+        printf("\t-max-size <int>\n");
+        printf("\t\tEstimation of the vocabulary size; default 100000\n");
         printf("\nExample usage:\n");
         printf("./vocab -input-file clean_data -vocab-file vocab.txt -nthread 8 -verbose 1\n\n");
         return 0;
@@ -232,16 +234,19 @@ int main(int argc, char **argv) {
     if ((i = find_arg((char *)"-threads", argc, argv)) > 0) num_threads = atoi(argv[i + 1]);
     if ((i = find_arg((char *)"-input-file", argc, argv)) > 0) strcpy(c_input_file_name, argv[i + 1]);
     if ((i = find_arg((char *)"-vocab-file", argc, argv)) > 0) strcpy(c_vocab_file_name, argv[i + 1]);
+    if ((i = find_arg((char *)"-max-size", argc, argv)) > 0) max_vocab_size = atoi(argv[i + 1]);
     else strcpy(c_vocab_file_name, (char *)"vocab.txt");
-    
+
     /* check whether input file exists */
     is_file(c_input_file_name);
 
     /* check whether output directory for vocab file exists */
-    is_directory(dirname(c_vocab_file_name));
+    char* tmp = strdup(c_vocab_file_name);
+    char* dir = dirname(tmp);
+    is_directory(dir);
 
     run();
-    
+
     // free
     free(c_input_file_name);
     free(c_vocab_file_name);
